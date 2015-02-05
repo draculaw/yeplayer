@@ -25,10 +25,12 @@ typedef struct VideoState {
 	AVFormatContext *pFormatCtx;
 	AVStream *pVideoStream;
 	int videoStreamIdx;
-	AVFrame* frame;  //to store the decoded frame    
+	AVFrame *frame;  //to store the decoded frame   
+	AVFrame *audioFrame;
 	int fint;
     int64_t nextFrameTime;//track next frame display time    
 	int frameqDequeueIdx, frameqEnqueueIdx;
+	AVIndexEntry *entryIdx;
 //	sem_t fqfullsem, fqemptysem;
     int status;
 
@@ -42,6 +44,10 @@ typedef struct VideoDisplayUtil {
     int frameNum; 
 } VideoDisplayUtil;
 
+typedef struct AudioState
+{
+	/* data */
+} AudioState;
 
 
 char *gVideoFileName = NULL;
@@ -79,6 +85,7 @@ JNIEXPORT jint JNICALL Java_com_draculaw_yeplayer_YePlayerHelper_naInit
 	YEPLAPYER_UNUSED(pEnv);
 	YEPLAPYER_UNUSED(filename);
 
+    LOGE(1, "init!");
 	av_register_all();
 
 	vs = av_mallocz(sizeof(VideoState));
@@ -241,32 +248,72 @@ JNIEXPORT jint JNICALL Java_com_draculaw_yeplayer_YePlayerHelper_naGetVideoFrame
 	//read frames and decode them 
   	AVPacket packet;   
   	int framefinished;
+  	int audiofinished;
   	while ((!vs->status) && 0 <= av_read_frame(vs->pFormatCtx, &packet)) {
 
-  		if (vs->videoStreamIdx == packet.stream_index) {       
+  		if (vs->videoStreamIdx == packet.stream_index) {    
+
   			avcodec_decode_video2(
   				vs->pVideoStream->codec, vs->frame, 
-  				&framefinished, &packet);       
+  				&framefinished, &packet);          
+
+  			avcodec_decode_audio4(
+  				vs->pVideoStream->codec, vs->audioFrame, 
+  				&audiofinished, &packet);       
+
+                LOGE(1, "audiofinished is %d!", audiofinished);
+  			if (audiofinished) {
+                int data_size = av_samples_get_buffer_size(  
+                        vs->audioFrame->linesize,
+                        vs->pVideoStream->codec->channels,  
+                        vs->audioFrame->nb_samples,
+                        vs->pVideoStream->codec->sample_fmt, 
+                        0);  
+
+                LOGE(1, "data size is %d!", data_size);
+  			}
+
   			if (framefinished) {
+
   				sws_scale(vdu->img_resample_ctx, 
   					vs->frame->data, vs->frame->linesize, 
   					0, vs->pVideoStream->codec->height, vdu->pFrameRGBA->data, 
   					vdu->pFrameRGBA->linesize);         
+
   				int64_t curtime = av_gettime();
-  			if (vs->nextFrameTime - curtime > 20*1000) {
-  			    usleep(vs->nextFrameTime-curtime);
+  				if (vs->nextFrameTime - curtime > 20*1000) {
+  					usleep(vs->nextFrameTime-curtime);
+  				}
+  				++vdu->frameNum;
+  				vs->nextFrameTime += vs->fint*1000;      
+
+  				if (gNextPlayTime != 0) {
+  					vs->nextFrameTime = gNextPlayTime * 1000;
+  					gNextPlayTime = 0;
+  				}
+
+  				return vdu->frameNum;
   			}
-  			++vdu->frameNum;
-  			vs->nextFrameTime += vs->fint*1000;      
-  			return vdu->frameNum;
   		}
-  	}
-  	av_free_packet(&packet);
-  } 
+  		av_free_packet(&packet);
+  	} 
 
   return 0;
 }
 
+
+/*
+ * Class:     com_draculaw_yeplayer_YePlayerHelper
+ * Method:    naNextTime
+ * Signature: (Landroid/graphics/Bitmap;II)I
+ */
+JNIEXPORT jint JNICALL Java_com_draculaw_yeplayer_YePlayerHelper_naNextTime
+  (JNIEnv *pEnv, jobject pObj, jint nextTime)
+{
+	gNextPlayTime = nextTime;
+
+	return 0;
+}
 
 /*
  * Class:     com_draculaw_yeplayer_YePlayerHelper
@@ -317,44 +364,7 @@ JNIEXPORT jint JNICALL Java_com_draculaw_yeplayer_YePlayerHelper_naPrepareDispla
 	vs->nextFrameTime = av_gettime() + 50*1000;	//introduce 50 milliseconds of initial delay
 	return 0;
 }
-#if 0	
-{
-  	YEPLAPYER_UNUSED(pEnv);
-  	YEPLAPYER_UNUSED(pObj);
-  	YEPLAPYER_UNUSED(pBitmap);
-  	YEPLAPYER_UNUSED(width);
-  	YEPLAPYER_UNUSED(height);
 
-  	VideoState* vs = gvs;
-  	VideoDisplayUtil* vdu = av_mallocz(sizeof(VideoDisplayUtil));    
-  	gvdu = vdu;
-  	vs->frame = avcodec_alloc_frame();    
-  	vdu->frameNum = 0;    
-  	vdu->width = width;    
-  	vdu->height = height;
-  	vdu->pFrameRGBA = avcodec_alloc_frame();
-  	AndroidBitmapInfo linfo;
-  	int lret;
-
-    //1. retrieve information about the bitmap
-  	AndroidBitmap_getInfo(pEnv, pBitmap, &linfo);
-    //2. lock the pixel buffer and retrieve a pointer to it    
-    AndroidBitmap_lockPixels(pEnv, pBitmap, &vdu->pBitmap);
-    //you use the bitmap buffer as the buffer for pFrameRGBA    
-    avpicture_fill((AVPicture*)vdu->pFrameRGBA, vdu->pBitmap, PIX_FMT_RGBA, width, height);
-	vdu->img_resample_ctx = sws_getContext(
-		vs->pVideoStream->codec>width, 
-		vs->pVideoStream->codec->height, 
-		vs->pVideoStream->codec->pix_fmt, 
-		width, height, PIX_FMT_RGBA, 
-		SWS_BICUBIC, NULL, NULL, 
-		NULL);
-
-   vs->nextFrameTime = av_gettime() + 50*1000;    //introduce 50 milliseconds of initial delay
-
-   return 0;
-}
-#endif
 
 
 /*
@@ -370,95 +380,6 @@ JNIEXPORT jint JNICALL Java_com_draculaw_yeplayer_YePlayerHelper_naStartDecodeVi
     return 0;
 }
 
-#if 0 
-void *decode_video_thread(void *arg) 
-{   
-	VideoState* vs = (VideoState *)arg;
-	AVPacket packet;   
-	int framefinished;
-	while ((!vs->status) && 0 <= av_read_frame(vs->pFormatCtx, &packet)) {     
-
-		if (vs->ifSeek) {
-			int64_t targetTime = (int64_t)(vs->seekTargetTime * (AV_TIME_BASE / 1000));  
-			targetTime = av_rescale_q(targetTime, AV_TIME_BASE_Q, vs->pVideoStream->time_base);
-			av_seek_frame(gvs->pFormatCtx, vs->videoStreamIdx, targetTime, 0) < 0);       
-			vs->frameqEnqueueIdx = 0;       
-			pthread_mutex_lock(&vs->mux);       
-			while (2!=vs->ifSeek) {
-				pthread_cond_wait(&vs->cond, &vs->mux);
-			}       
-			vs->ifSeek = 0;
-			pthread_mutex_unlock(&vs->mux);
-		} else if (vs->videoStreamIdx == packet.stream_index) {       
-			sem_wait(&vs->fqemptysem);  
-			AVFrame *pframe = vs->frameq[vs->frameqEnqueueIdx];       
-			avcodec_decode_video2(vs->pVideoStream->codec, pframe, &framefinished, &packet);       
-			if (framefinished) {         
-				vs->frameqEnqueueIdx++;
-				if (VIDEO_FR_QUEUE_SIZE == vs->frameqEnqueueIdx) {
-					vs->frameqEnqueueIdx = 0;      
-				}
-				sem_post(&vs->fqfullsem);  
-			}
-		}
-		av_free_packet(&packet);
-	}
-
-  	vs->status = 2;  //end of decoding   
-	return 0; 
-}
-
-int naGetVideoFrame(JNIEnv *pEnv, jobject pObj) {
-  	VideoState *vs = gvs;
-  	VideoDisplayUtil *vdu = gvdu;
-  	if (!vs->status || (vs->frameqDequeueIdx != vs->frameqEnqueueIdx)) {      
-  		if (vs->ifSeek) {       
-  			int numOfItemsInQueue = 0;
-  			sem_getvalue(&vs->fqfullsem, &numOfItemsInQueue);       
-  			while (numOfItemsInQueue--) {         
-  				sem_wait(&vs->fqfullsem);          
-  				sem_post(&vs->fqemptysem);
-	  		}       
-	  		while (vs->ifSeek) {         
-	  			pthread_mutex_lock(&vs->mux);         
-	  			vs->ifSeek = 2;         
-	  			pthread_cond_signal(&vs->cond);          
-	  			pthread_mutex_unlock(&vs->mux);
-	  		}
-	  		vs->frameqDequeueIdx = 0;
-	  		vdu->frameNum = vs->seekTargetTime / vs->fint;       
-	  		vs->nextFrameTime += vs->fint * 1000;
-	  	} else {
-	  		sem_wait(&vs->fqfullsem);  
-	  		AVFrame *pframe = vs->frameq[vs->frameqDequeueIdx];              
-	  		sws_scale(
-	  			vdu->img_resample_ctx, 
-	  			pframe->data, pframe->linesize, 
-	  			0, vs->pVideoStream->codec->height, 
-	  			vdu->pFrameRGBA->data, 
-	  			vdu->pFrameRGBA->linesize);       
-	  		int64_t curtime = av_gettime();       
-	  		if (vs->nextFrameTime - curtime > 20*1000) { 
-	  			usleep(vs->nextFrameTime-curtime);
-	  		}
-	  		++vdu->frameNum;       
-	  		vs->nextFrameTime += vs->fint*1000;       
-	  		vs->frameqDequeueIdx++;
-	  		if (VIDEO_FR_QUEUE_SIZE == vs->frameqDequeueIdx) {         
-	  			vs->frameqDequeueIdx = 0;
-	  		}
-	  		sem_post(&vs->fqemptysem);
-	  	}
-	  	return vdu->frameNum;
-	} else {
-   		vs->status = 3;  //no more frame to display     
-   		return 0;
-   	}
-
-   	return 0;
-}
-
-#endif 
 
 
 #ifdef __cplusplus
