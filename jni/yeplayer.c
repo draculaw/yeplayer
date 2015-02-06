@@ -2,6 +2,8 @@
 #include <jni.h>
 #include <string.h>
 #include <android/bitmap.h>
+#include <SLES/OpenSLES.h>
+
 #include "com_draculaw_yeplayer_YePlayerHelper.h"
 #include "libavformat/avformat.h"
 #include "libswscale/swscale.h"
@@ -249,19 +251,22 @@ JNIEXPORT jint JNICALL Java_com_draculaw_yeplayer_YePlayerHelper_naGetVideoFrame
   	AVPacket packet;   
   	int framefinished;
   	int audiofinished;
+  	int retVideo;
+  	int retAudio;
   	while ((!vs->status) && 0 <= av_read_frame(vs->pFormatCtx, &packet)) {
 
   		if (vs->videoStreamIdx == packet.stream_index) {    
 
-  			avcodec_decode_video2(
+  			retVideo = avcodec_decode_video2(
   				vs->pVideoStream->codec, vs->frame, 
   				&framefinished, &packet);          
 
-  			avcodec_decode_audio4(
+  			retAudio = avcodec_decode_audio4(
   				vs->pVideoStream->codec, vs->audioFrame, 
   				&audiofinished, &packet);       
 
-                LOGE(1, "audiofinished is %d!", audiofinished);
+  			LOGE(1, "ret Video %d finished %d \n ret audio %d finished is %d!", 
+                	retVideo, framefinished, retAudio, audiofinished);
   			if (audiofinished) {
                 int data_size = av_samples_get_buffer_size(  
                         vs->audioFrame->linesize,
@@ -276,8 +281,11 @@ JNIEXPORT jint JNICALL Java_com_draculaw_yeplayer_YePlayerHelper_naGetVideoFrame
   			if (framefinished) {
 
   				sws_scale(vdu->img_resample_ctx, 
-  					vs->frame->data, vs->frame->linesize, 
-  					0, vs->pVideoStream->codec->height, vdu->pFrameRGBA->data, 
+  					vs->frame->data, 
+  					vs->frame->linesize, 
+  					0, 
+  					vs->pVideoStream->codec->height, 
+  					vdu->pFrameRGBA->data, 
   					vdu->pFrameRGBA->linesize);         
 
   				int64_t curtime = av_gettime();
