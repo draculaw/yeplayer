@@ -1,4 +1,3 @@
-
 #include <jni.h>
 #include <string.h>
 #include <android/bitmap.h>
@@ -103,6 +102,7 @@ JNIEXPORT jint JNICALL Java_com_draculaw_yeplayer_YePlayerHelper_naInit
 	avformat_find_stream_info(vs->pFormatCtx, NULL);
 
 	vs->videoStreamIdx = -1;
+
 	for (i = 0; i < vs->pFormatCtx->nb_streams; ++i) {
 		if (AVMEDIA_TYPE_VIDEO == 
 				vs->pFormatCtx->streams[i]->codec->codec_type) {
@@ -253,6 +253,7 @@ JNIEXPORT jint JNICALL Java_com_draculaw_yeplayer_YePlayerHelper_naGetVideoFrame
   	int audiofinished;
   	int retVideo;
   	int retAudio;
+  	LOGE(1, "wxb dur %d time_base %d ", gvs->pFormatCtx->duration, AV_TIME_BASE);
   	while ((!vs->status) && 0 <= av_read_frame(vs->pFormatCtx, &packet)) {
 
   		if (vs->videoStreamIdx == packet.stream_index) {    
@@ -264,6 +265,7 @@ JNIEXPORT jint JNICALL Java_com_draculaw_yeplayer_YePlayerHelper_naGetVideoFrame
   			retAudio = avcodec_decode_audio4(
   				vs->pVideoStream->codec, vs->audioFrame, 
   				&audiofinished, &packet);       
+  			int64_t curtime = av_gettime();
 
   			LOGE(1, "ret Video %d finished %d \n ret audio %d finished is %d!", 
                 	retVideo, framefinished, retAudio, audiofinished);
@@ -288,17 +290,22 @@ JNIEXPORT jint JNICALL Java_com_draculaw_yeplayer_YePlayerHelper_naGetVideoFrame
   					vdu->pFrameRGBA->data, 
   					vdu->pFrameRGBA->linesize);         
 
-  				int64_t curtime = av_gettime();
+
+  				LOGE(1, "yeplayer fint %d framenume %d vs->nextFrameTime %d curtime %d", 
+  					vs->fint, vdu->frameNum, vs->nextFrameTime, curtime);     
   				if (vs->nextFrameTime - curtime > 20*1000) {
-  					usleep(vs->nextFrameTime-curtime);
+  					//usleep(vs->nextFrameTime-curtime);
+  					usleep(1);
   				}
   				++vdu->frameNum;
-  				vs->nextFrameTime += vs->fint*1000;      
+  				vs->nextFrameTime += vs->fint*1000;    
 
   				if (gNextPlayTime != 0) {
   					vs->nextFrameTime = gNextPlayTime * 1000;
   					gNextPlayTime = 0;
   				}
+  				LOGE(1, "yeplayer fint %d framenume %d vs->nextFrameTime-curtime %d", 
+  					vs->fint, vdu->frameNum, vs->nextFrameTime-curtime);        
 
   				return vdu->frameNum;
   			}
